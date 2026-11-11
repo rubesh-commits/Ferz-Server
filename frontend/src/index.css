@@ -1,0 +1,9 @@
+@import "tailwindcss";
+
+.tinted-bg {
+  background:
+    radial-gradient(900px 500px at 10% -10%, rgba(236, 72, 153, 0.22), transparent 60%),
+    radial-gradient(800px 500px at 90% 0%, rgba(139, 92, 246, 0.25), transparent 60%),
+    radial-gradient(900px 600px at 50% 110%, rgba(59, 130, 246, 0.14), transparent 60%),
+    #0f0d17;
+}
