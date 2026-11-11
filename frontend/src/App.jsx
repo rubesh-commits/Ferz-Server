@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Admin from './Admin';
 import StarSky from './StarSky';
 
@@ -35,6 +35,7 @@ export default function App() {
   const [section, setSection] = useState("all");
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState("newest");
+  const touchStart = useRef(0);
 
   const API_URL = ""; 
 
@@ -303,37 +304,52 @@ export default function App() {
         </div>
       </nav>
       <div className="flex-1 min-w-0 p-4 sm:p-8">
-        <header className="mb-4 flex flex-wrap items-center gap-3">
-          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search files"
-            className="flex-1 min-w-[160px] bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-[#e8b9a0]/60" />
-          <select value={sort} onChange={(e) => setSort(e.target.value)}
-            className="bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm outline-none">
-            <option value="newest" className="bg-neutral-900">Newest</option>
-            <option value="oldest" className="bg-neutral-900">Oldest</option>
-            <option value="name" className="bg-neutral-900">Name</option>
-            <option value="size" className="bg-neutral-900">Size</option>
-          </select>
-          <button onClick={() => setView(view === "grid" ? "list" : "grid")}
-            className="bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm hover:bg-white/10 transition-colors">
-            {view === "grid" ? "List" : "Grid"}
-          </button>
-          {me?.is_admin && (
-            <button onClick={() => setShowAdmin(true)} className="text-sm text-neutral-400 hover:text-white transition-colors">Admin</button>
-          )}
-          <button onClick={handleLogout} className="text-sm text-neutral-400 hover:text-white transition-colors">Log out</button>
+        <header className="mb-4 space-y-3">
+          <div className="flex items-center justify-between md:hidden">
+            <h1 className="text-2xl font-serif">Ferz Space</h1>
+            <div className="flex items-center gap-4 text-sm text-neutral-400">
+              {me?.is_admin && <button onClick={() => setShowAdmin(true)} className="hover:text-white">Admin</button>}
+              <button onClick={handleLogout} className="hover:text-white">Log out</button>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 sm:gap-3">
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search files"
+              className="flex-1 min-w-0 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-[#e8b9a0]/60" />
+            <select value={sort} onChange={(e) => setSort(e.target.value)}
+              className="bg-white/5 border border-white/10 rounded-xl px-2 sm:px-3 py-2.5 text-base sm:text-sm outline-none">
+              <option value="newest" className="bg-neutral-900">Newest</option>
+              <option value="oldest" className="bg-neutral-900">Oldest</option>
+              <option value="name" className="bg-neutral-900">Name</option>
+              <option value="size" className="bg-neutral-900">Size</option>
+            </select>
+            <button onClick={() => setView(view === "grid" ? "list" : "grid")}
+              className="bg-white/5 border border-white/10 rounded-xl px-3 sm:px-4 py-2.5 text-sm hover:bg-white/10 transition-colors">
+              {view === "grid" ? "List" : "Grid"}
+            </button>
+            {me?.is_admin && (
+              <button onClick={() => setShowAdmin(true)} className="hidden md:block text-sm text-neutral-400 hover:text-white transition-colors">Admin</button>
+            )}
+            <button onClick={handleLogout} className="hidden md:block text-sm text-neutral-400 hover:text-white transition-colors">Log out</button>
+          </div>
         </header>
 
         <div className="flex gap-2 mb-4 md:hidden">
           {[["all", "All"], ["photos", "Photos"], ["videos", "Videos"]].map(([k, label]) => (
             <button key={k} onClick={() => setSection(k)}
-              className={"px-3 py-1.5 rounded-full text-sm " + (section === k ? "bg-white/15" : "bg-white/5 text-neutral-400")}>
+              className={"px-4 py-2 rounded-full text-sm " + (section === k ? "bg-white/15" : "bg-white/5 text-neutral-400")}>
               {label} {counts[k]}
             </button>
           ))}
         </div>
+        <div className="md:hidden mb-4 text-xs text-neutral-400">
+          {fmtStore(me?.used)} of {fmtStore(me?.quota)} used
+          <div className="h-1 mt-1.5 rounded-full bg-white/10 overflow-hidden">
+            <div className="h-full bg-[#e8b9a0]" style={{ width: pct + "%" }} />
+          </div>
+        </div>
 
         <div className={"overflow-hidden transition-all duration-300 " + (checked.length ? "max-h-32 mb-4 opacity-100" : "max-h-0 opacity-0")}>
-          <div className="flex flex-wrap items-center gap-4 bg-white/5 border border-white/10 backdrop-blur-xl rounded-2xl px-5 py-3 shadow-lg">
+          <div className="flex flex-wrap items-center gap-4 bg-white/5 border border-white/10 backdrop-blur-xl rounded-2xl px-5 py-3 shadow-lg [&_button]:py-1.5 gap-y-1">
             <span className="text-sm text-neutral-300">{checked.length} selected</span>
             <button
               onClick={() => setChecked(checked.length === shown.length ? [] : [...media])}
@@ -352,7 +368,7 @@ export default function App() {
               {media.length === 0 ? "Nothing here yet. Upload some photos or videos." : "No matches."}
             </p>
           ) : view === "grid" ? (
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-4 auto-rows-[240px]">
+            <div className="grid grid-cols-2 sm:grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-3 sm:gap-4 auto-rows-[200px] sm:auto-rows-[240px]">
               {shown.map((file) => (
                 <div key={file}
                   className="relative group cursor-pointer rounded-2xl overflow-hidden shadow-lg border border-white/10 bg-white/5 transition-all hover:scale-[1.02] hover:shadow-2xl hover:border-purple-400/50 flex flex-col"
@@ -362,7 +378,7 @@ export default function App() {
                   )}
                   <button type="button" aria-label="Select"
                     onClick={(e) => { e.stopPropagation(); toggleCheck(file); }}
-                    className={"absolute top-2 left-2 z-20 h-6 w-6 rounded-full border-2 flex items-center justify-center transition-all " +
+                    className={"absolute top-2 left-2 z-20 h--8 w-8 sm:h-6 sm:w-6 rounded-full border-2 flex items-center justify-center transition-all " +
                       (checked.includes(file)
                         ? "bg-purple-500 border-purple-500"
                         : "bg-black/40 border-white/70 backdrop-blur-sm hover:border-white hover:bg-black/60")}>
@@ -417,9 +433,12 @@ export default function App() {
             </div>
         )}
       </div>
-      <aside className={"sticky top-0 self-start h-screen shrink-0 overflow-hidden transition-all duration-300 " + (detailsOpen ? "w-80" : "w-0")}>
-        <div className="w-80 h-full p-4">
-          <div className="h-full overflow-y-auto bg-white/5 border border-white/10 backdrop-blur-xl rounded-2xl shadow-lg p-5">
+      <aside className={"fixed bottom-0 inset-x-0 z-40 transition-transform duration-300 " +
+        (detailsOpen ? "translate-y-0" : "translate-y-full") +
+        " md:sticky md:top-0 md:inset-auto md:self-start md:h-screen md:shrink-0 md:overflow-hidden md:translate-y-0 md:transition-all " +
+        (detailsOpen ? "md:w-80" : "md:w-0")}>
+        <div className="w-full md:w-80 h-full p-4">
+          <div className="h-full overflow-y-auto bg-[#1b1c28] md:bg-white/5 border border-white/10 backdrop-blur-xl rounded-2xl shadow-lg p-5 max-h-[70vh] md:max-h-none">
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-lg font-bold">Details</h2>
               <button onClick={() => setDetailsOpen(false)} className="text-neutral-400 hover:text-white text-2xl leading-none">&times;</button>
@@ -461,19 +480,25 @@ export default function App() {
         <div 
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-md transition-opacity"
           onClick={() => setSelected(null)}
+          onTouchStart={(e) => { touchStart.current = e.touches[0].clientX; }}
+          onTouchEnd={(e) => {
+            const dx = e.changedTouches[0].clientX - touchStart.current;
+            if (!isVideo(selected) && Math.abs(dx) > 50) go(dx < 0 ? 1 : -1);
+          }}
+
         >
           <div className="relative w-full max-w-5xl max-h-full flex justify-center items-center" onClick={(e) => e.stopPropagation()}>
             <button 
-              className="absolute -top-12 right-0 text-neutral-400 hover:text-white transition-colors p-2 text-4xl"
+              className="fixed top-3 right-3 z-10 h-11 w-11 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 text-white text-3xl leading-none"
               onClick={() => setSelected(null)}
             >
               &times;
             </button>
 
             {isVideo(selected) ? (
-              <video src={`${API_URL}/photos/${selected}`} controls autoPlay className="max-h-[85vh] max-w-full rounded-lg shadow-2xl ring-1 ring-white/10" />
+              <video src={`${API_URL}/photos/${selected}`} controls autoPlay className="max-h-[80dvh] max-w-full rounded-lg shadow-2xl ring-1 ring-white/10" />
             ) : (
-              <img src={`${API_URL}/photos/${selected}`} className="max-h-[85vh] max-w-full rounded-lg shadow-2xl ring-1 ring-white/10 object-contain" />
+              <img src={`${API_URL}/photos/${selected}`} className="max-h-[80dvh] max-w-full rounded-lg shadow-2xl ring-1 ring-white/10 object-contain" />
             )}
           </div>
           {selIdx > 0 && (
