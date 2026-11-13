@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import Admin from './Admin';
-import StarSky from './StarSky';
+import Profile from './Profile';
+import { hubUrl, loginUrl } from './config';
 
 const Icon = ({ children }) => (
   <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0" fill="none" stroke="currentColor"
@@ -16,21 +17,14 @@ export default function App() {
   const [media, setMedia] = useState([]);
   const [selected, setSelected] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
-  const [authed, setAuthed] = useState(null); 
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [loginError, setLoginError] = useState("");
+  const [authed, setAuthed] = useState(null);
   const [me, setMe] = useState(null);
   const [showAdmin, setShowAdmin] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
   const [checked, setChecked] = useState([]);
   const [info, setInfo] = useState(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [mode, setMode] = useState("login");
-  const [reqUser, setReqUser] = useState("");
-  const [reqPass, setReqPass] = useState("");
-  const [reqError, setReqError] = useState("");
-  const [reqDone, setReqDone] = useState(false);
   const [view, setView] = useState("grid");
   const [section, setSection] = useState("all");
   const [query, setQuery] = useState("");
@@ -39,10 +33,12 @@ export default function App() {
 
   const API_URL = ""; 
 
+  const redirectToLogin = () => window.location.replace(loginUrl());
+
   const fetchMedia = () => {
     fetch(`${API_URL}/media/`)
       .then((res) => {
-        if (res.status === 401) { setAuthed(false); return null; }
+        if (res.status === 401) { setAuthed(false); redirectToLogin(); return null; }
         return res.json();
       })
       .then((data) => { if (data) setMedia(data.files); })
@@ -56,10 +52,12 @@ export default function App() {
   useEffect(() => {
     fetch(`${API_URL}/me`)
       .then(async (res) => {
-        setAuthed(res.ok);
-        if (res.ok) { setMe(await res.json()); fetchMedia(); }
+        if (!res.ok) { setAuthed(false); redirectToLogin(); return; }
+        setAuthed(true);
+        setMe(await res.json());
+        fetchMedia();
       })
-      .catch(() => setAuthed(false));
+      .catch(() => { setAuthed(false); redirectToLogin(); });
   }, []);
 
   const handleUpload = async (event) => {
@@ -76,7 +74,7 @@ export default function App() {
           method: 'POST',
           body: formData,
         });
-        if (response.status === 401) { setAuthed(false); break; }
+        if (response.status === 401) { setAuthed(false); redirectToLogin(); break; }
         if (!response.ok) alert(`Upload failed: ${file.name}`);
       } catch (error) {
         console.error("Upload error:", error);
@@ -87,55 +85,9 @@ export default function App() {
     input.value = "";
   };
 
-  const handleLogin = async (e) => {
-    e.preventDefault();
-    setLoginError("");
-    try {
-      const res = await fetch(`${API_URL}/login`, {
-        method: 'POST',
-        body: new URLSearchParams({ username, password }),
-      });
-      if (res.ok) {
-        setPassword("");
-        setAuthed(true);
-        fetch(API_URL + "/me").then((r) => r.json()).then(setMe).catch(() => {});
-        fetchMedia();
-      } else if (res.status === 401) {
-        setLoginError("Invalid username or password");
-      } else if (res.status === 429) {
-        setLoginError("Too many attempts. Wait a minute and try again.");
-      } else {
-        setLoginError(`Server error (${res.status})`);
-      }
-    } catch {
-      setLoginError("Could not reach the server");
-    }
-  };
-
-  const handleRequest = async (e) => {
-    e.preventDefault();
-    setReqError("");
-    try {
-      const res = await fetch(`${API_URL}/request-user`, {
-        method: "POST",
-        body: new URLSearchParams({ username: reqUser, password: reqPass }),
-      });
-      if (res.ok) { setReqDone(true); setReqPass(""); }
-      else if (res.status === 409) setReqError("That username isn't available.");
-      else if (res.status === 429) setReqError("Too many requests. Try again later.");
-      else if (res.status === 400) setReqError("Username 3–32 characters, password at least 8.");
-      else setReqError(`Server error (${res.status})`);
-    } catch { setReqError("Could not reach the server"); }
-  };
-
-  const backToLogin = () => { setMode("login"); setReqDone(false); setReqError(""); setReqUser(""); setReqPass(""); };
-
   const handleLogout = async () => {
     await fetch(`${API_URL}/logout`, { method: 'POST' });
-    setAuthed(false);
-    setMe(null); setShowAdmin(false);
-    setMedia([]);
-    setSelected(null);
+    window.location.assign(hubUrl());
   };
 
   const toggleCheck = (file) =>
@@ -151,7 +103,7 @@ export default function App() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ names: checked }),
     });
-    if (res.status === 401) { setAuthed(false); return; }
+    if (res.status === 401) { setAuthed(false); redirectToLogin(); return; }
     if (!res.ok) { alert("Delete failed."); return; }
     setChecked([]);
     setInfo(null);
@@ -200,82 +152,62 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   });
 
+  const pressTimer = useRef(null);
+  const longPressed = useRef(false);
+  const pressOrigin = useRef({ x: 0, y: 0 });
+  const isTouch = () => window.matchMedia("(pointer: coarse)").matches;
+
+  const pressCancel = () => {
+    clearTimeout(pressTimer.current);
+    pressTimer.current = null;
+  };
+
+  const pressStart = (file, event) => {
+    longPressed.current = false;
+    pressCancel();
+    const touch = event.touches?.[0];
+    pressOrigin.current = { x: touch?.clientX ?? 0, y: touch?.clientY ?? 0 };
+    pressTimer.current = setTimeout(() => {
+      pressTimer.current = null;
+      longPressed.current = true;
+      toggleCheck(file);
+      if (navigator.vibrate) navigator.vibrate(20);
+    }, 450);
+  };
+
+  // Cancel the long press only once the finger actually moves (a small
+  // tolerance keeps normal tap jitter from cancelling it).
+  const pressMove = (event) => {
+    const touch = event.touches?.[0];
+    if (!touch) return;
+    const dx = touch.clientX - pressOrigin.current.x;
+    const dy = touch.clientY - pressOrigin.current.y;
+    if (Math.hypot(dx, dy) > 12) pressCancel();
+  };
+
+  useEffect(() => () => clearTimeout(pressTimer.current), []);
+
+  const pressProps = (file) => ({
+    onTouchStart: (event) => pressStart(file, event),
+    onTouchMove: pressMove,
+    onTouchEnd: pressCancel,
+    onTouchCancel: pressCancel,
+    onContextMenu: (e) => e.preventDefault(),
+    onClick: () => {
+      if (longPressed.current) { longPressed.current = false; return; }
+      if (checked.length > 0 && isTouch()) toggleCheck(file);
+      else setSelected(file);
+    },
+  });
+
   if (authed === null) return null;
-  if (!authed) {
-    return (
-      <div
-        className="relative min-h-screen text-white flex items-center justify-center p-4 overflow-hidden"
-        style={{ background: 'linear-gradient(to bottom, #15151c 0%, #1b1a33 45%, #2b2260 100%)' }}
-      >
-        <StarSky />
-        {mode === "login" ? (
-          <form onSubmit={handleLogin} className="relative z-10 w-full max-w-sm bg-white/5 border border-white/10 backdrop-blur-xl rounded-3xl p-8 space-y-4 shadow-2xl">
-            <h1 className="text-center text-4xl font-serif">Ferz Space</h1>
-            <p className="text-center text-sm text-neutral-400 pb-2">Sign in to your private storage.</p>
-            <input
-              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-purple-400/60"
-              placeholder="Username" autoComplete="username"
-              value={username} onChange={(e) => setUsername(e.target.value)}
-            />
-            <input
-              type="password"
-              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-purple-400/60"
-              placeholder="Password" autoComplete="current-password"
-              value={password} onChange={(e) => setPassword(e.target.value)}
-            />
-            {loginError && <p className="text-sm text-red-400">{loginError}</p>}
-            <button className="w-full bg-gradient-to-r from-[#e8b9a0] to-[#d9a58b] text-neutral-900 hover:brightness-105 transition font-medium py-3 rounded-xl">
-              Log in
-            </button>
-            <button type="button" onClick={() => setMode("request")}
-              className="w-full text-sm text-neutral-400 hover:text-white transition-colors pt-1">
-              Create user
-            </button>
-          </form>
-        ) : (
-        <form onSubmit={handleRequest} className="relative z-10 w-full max-w-sm bg-white/5 border border-white/10 backdrop-blur-xl rounded-3xl p-8 space-y-4 shadow-2xl">
-          <h1 className="text-center text-4xl font-serif">Create user</h1>
-          {reqDone ? (
-            <>
-              <p className="text-center text-sm text-neutral-300 py-4">
-                Request sent. The admin will review it and set up your account.
-              </p>
-              <button type="button" onClick={backToLogin}
-                className="w-full text-sm text-neutral-400 hover:text-white transition-colors">
-                Back to sign in
-              </button>
-            </>
-          ) : (
-            <>
-              <p className="text-center text-sm text-neutral-400 pb-2">Choose the username and password you want.</p>
-              <input
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-purple-400/60"
-                placeholder="Username" autoComplete="off"
-                value={reqUser} onChange={(e) => setReqUser(e.target.value)}
-              />
-              <input
-                type="password"
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-purple-400/60"
-                placeholder="Password (min 8 characters)" autoComplete="new-password"
-                value={reqPass} onChange={(e) => setReqPass(e.target.value)}
-              />
-              {reqError && <p className="text-sm text-red-400">{reqError}</p>}
-              <button className="w-full bg-gradient-to-r from-[#e8b9a0] to-[#d9a58b] text-neutral-900 hover:brightness-105 transition font-medium py-3 rounded-xl">
-                Request
-              </button>
-              <button type="button" onClick={backToLogin}
-                className="w-full text-sm text-neutral-400 hover:text-white transition-colors pt-1">
-                Back to sign in
-              </button>
-            </>
-          )}
-        </form>
-        )}
-      </div>
-    );
-  }
+  if (!authed) return null;
 
   if (showAdmin) return <Admin onBack={() => setShowAdmin(false)} />;
+
+  if (showProfile) return (
+    <Profile onBack={() => { setShowProfile(false); fetchMedia(); }} />
+  );
 
   return (
     <div className="min-h-screen bg-[#14151f] text-white font-sans flex">
@@ -301,6 +233,9 @@ export default function App() {
             <div className="h-full bg-[#e8b9a0] transition-all duration-500" style={{ width: pct + "%" }} />
           </div>
           <p className="text-sm text-neutral-400 mt-3">{fmtStore(me?.used)} of {fmtStore(me?.quota)} used.</p>
+          <button onClick={() => setShowProfile(true)} className="mt-2 text-sm text-[#e8b9a0] hover:brightness-110 transition">
+            Request more storage
+          </button>
         </div>
       </nav>
       <div className="flex-1 min-w-0 p-4 sm:p-8">
@@ -308,6 +243,7 @@ export default function App() {
           <div className="flex items-center justify-between md:hidden">
             <h1 className="text-2xl font-serif">Ferz Space</h1>
             <div className="flex items-center gap-4 text-sm text-neutral-400">
+              <button onClick={() => setShowProfile(true)} className="hover:text-white">Profile</button>
               {me?.is_admin && <button onClick={() => setShowAdmin(true)} className="hover:text-white">Admin</button>}
               <button onClick={handleLogout} className="hover:text-white">Log out</button>
             </div>
@@ -326,6 +262,7 @@ export default function App() {
               className="bg-white/5 border border-white/10 rounded-xl px-3 sm:px-4 py-2.5 text-sm hover:bg-white/10 transition-colors">
               {view === "grid" ? "List" : "Grid"}
             </button>
+            <button onClick={() => setShowProfile(true)} className="hidden md:block text-sm text-neutral-400 hover:text-white transition-colors">Profile</button>
             {me?.is_admin && (
               <button onClick={() => setShowAdmin(true)} className="hidden md:block text-sm text-neutral-400 hover:text-white transition-colors">Admin</button>
             )}
@@ -368,17 +305,18 @@ export default function App() {
               {media.length === 0 ? "Nothing here yet. Upload some photos or videos." : "No matches."}
             </p>
           ) : view === "grid" ? (
-            <div className="grid grid-cols-2 sm:grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-3 sm:gap-4 auto-rows-[200px] sm:auto-rows-[240px]">
+            <div className="grid grid-cols-2 sm:grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-3 sm:gap-4 auto-rows-[200px] sm:auto-rows-[240px] select-none [-webkit-touch-callout:none]">
               {shown.map((file) => (
                 <div key={file}
                   className="relative group cursor-pointer rounded-2xl overflow-hidden shadow-lg border border-white/10 bg-white/5 transition-all hover:scale-[1.02] hover:shadow-2xl hover:border-purple-400/50 flex flex-col"
-                  onClick={() => setSelected(file)}>
+                  {...pressProps(file)}>
                   {checked.includes(file) && (
                     <div className="absolute inset-0 rounded-2xl ring-2 ring-inset ring-purple-400 pointer-events-none z-10" />
                   )}
                   <button type="button" aria-label="Select"
                     onClick={(e) => { e.stopPropagation(); toggleCheck(file); }}
-                    className={"absolute top-2 left-2 z-20 h--8 w-8 sm:h-6 sm:w-6 rounded-full border-2 flex items-center justify-center transition-all " +
+                    onTouchStart={(e) => e.stopPropagation()}
+                    className={"absolute top-2 left-2 z-20 h-8 w-8 sm:h-6 sm:w-6 rounded-full border-2 flex items-center justify-center transition-all " +
                       (checked.includes(file)
                         ? "bg-purple-500 border-purple-500"
                         : "bg-black/40 border-white/70 backdrop-blur-sm hover:border-white hover:bg-black/60")}>
@@ -390,9 +328,9 @@ export default function App() {
                   </button>
                   <div className="flex-1 min-h-0">
                     {isVideo(file) ? (
-                      <video src={`${API_URL}/photos/${file}`} className="w-full h-full object-cover opacity-90 group-hover:opacity-100" muted preload="metadata" />
+                      <video src={`${API_URL}/photos/${file}`} className="w-full h-full object-cover opacity-90 group-hover:opacity-100" muted preload="metadata" pointer-events-none/>
                     ) : (
-                      <img src={`${API_URL}/photos/${file}`} className="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity" loading="lazy" />
+                      <img src={`${API_URL}/photos/${file}`} className="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity" loading="lazy" pointer-events-none/>
                     )}
                   </div>
                   <div className="px-3 py-2 bg-black/20">
@@ -403,14 +341,15 @@ export default function App() {
               ))}
             </div>
           ) : (
-            <div className="rounded-2xl border border-white/10 bg-white/5 overflow-hidden">
+            <div className="rounded-2xl border border-white/10 bg-white/5 overflow-hidden select-none">
               {shown.map((file) => (
-                <div key={file} onClick={() => setSelected(file)}
+                <div key={file} {...pressProps(file)}
                   className={"flex items-center gap-3 px-3 py-2 cursor-pointer border-b border-white/5 last:border-b-0 transition-colors hover:bg-white/5 " +
                     (checked.includes(file) ? "bg-white/10" : "")}>
                   <button type="button" aria-label="Select"
                     onClick={(e) => { e.stopPropagation(); toggleCheck(file); }}
-                    className={"h-5 w-5 shrink-0 rounded-full border-2 flex items-center justify-center " +
+                    onTouchStart={(e) => e.stopPropagation()}
+                    className={"h-5 w-5 shrink-0 rounoded-full border-2 flex items-center justify-center " +
                       (checked.includes(file) ? "bg-purple-500 border-purple-500" : "border-white/50 hover:border-white")}>
                     {checked.includes(file) && (
                       <svg viewBox="0 0 24 24" className="h-3 w-3 text-white" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
@@ -419,9 +358,9 @@ export default function App() {
                     )}
                   </button>
                   {isVideo(file) ? (
-                    <video src={`${API_URL}/photos/${file}`} className="h-10 w-10 rounded-lg object-cover shrink-0" muted preload="metadata" />
+                    <video src={`${API_URL}/photos/${file}`} className="h-10 w-10 rounded-lg object-cover shrink-0" muted preload="metadata" pointer-events-none/>
                   ) : (
-                    <img src={`${API_URL}/photos/${file}`} className="h-10 w-10 rounded-lg object-cover shrink-0" loading="lazy" />
+                    <img src={`${API_URL}/photos/${file}`} className="h-10 w-10 rounded-lg object-cover shrink-0" loading="lazy" pointer-events-none/>
                   )}
                   <div className="min-w-0 flex-1 truncate text-sm">{nameOf(file)}</div>
                   <div className="text-xs text-neutral-400 w-20 text-right">{fmtSize(info?.[file]?.bytes)}</div>

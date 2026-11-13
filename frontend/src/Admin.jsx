@@ -16,6 +16,7 @@ export default function Admin({ onBack }) {
   const [form, setForm] = useState({ username: "", password: "", is_admin: false });
   const [tab, setTab] = useState("users");
   const [requests, setRequests] = useState([]);
+  const [quotaRequests, setQuotaRequests] = useState([]);
   const [files, setFiles] = useState([]);
   const [activity, setActivity] = useState([]);
 
@@ -25,12 +26,16 @@ export default function Admin({ onBack }) {
       .then((d) => setUsers(d.users))
       .catch((s) => setError(`Could not load users (${s})`));
 
-  useEffect(() => { load(); }, []);
-
   const loadRequests = () =>
   fetch("/admin/requests")
     .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
     .then((d) => setRequests(d.requests))
+    .catch(() => {});
+
+  const loadQuotaRequests = () =>
+  fetch("/admin/quota-requests")
+    .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+    .then((d) => setQuotaRequests(d.requests))
     .catch(() => {});
 
   const loadFiles = () =>
@@ -41,9 +46,10 @@ export default function Admin({ onBack }) {
   fetch("/admin/activity").then((r) => (r.ok ? r.json() : Promise.reject()))
     .then((d) => setActivity(d.activity)).catch(() => {});
 
-  useEffect(() => { load(); loadRequests(); }, []);
+  useEffect(() => { load(); loadRequests(); loadQuotaRequests(); }, []);
   useEffect(() => {
     if (tab === "files") loadFiles();
+    if (tab === "quota") loadQuotaRequests();
     if (tab === "activity") loadActivity();
   }, [tab]);
 
@@ -55,7 +61,7 @@ export default function Admin({ onBack }) {
       setError(d.detail || `Error ${res.status}`);
       return false;
     }
-    load(); loadRequests();
+    load(); loadRequests(); loadQuotaRequests();
     if (tab === "files") loadFiles();
     if (tab === "activity") loadActivity();
     return true;
@@ -112,8 +118,8 @@ export default function Admin({ onBack }) {
 
         {error && <p className="mb-4 text-sm text-red-400">{error}</p>}
 
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
-          {[[users.length, "Users"], [totalFiles, "Files"], [fmt(totalBytes), "Storage used"], [requests.length, "Pending requests"]].map(([v, l]) => (
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-6">
+          {[[users.length, "Users"], [totalFiles, "Files"], [fmt(totalBytes), "Storage used"], [requests.length, "Account requests"], [quotaRequests.length, "Storage requests"]].map(([v, l]) => (
             <div key={l} className="bg-white/5 border border-white/10 rounded-2xl px-5 py-4">
               <div className="text-2xl font-serif">{v}</div>
               <div className="text-sm text-neutral-400">{l}</div>
@@ -122,13 +128,16 @@ export default function Admin({ onBack }) {
         </div>
 
         <div className="flex gap-6 border-b border-white/10 mb-6">
-          {[["users", "Users"], ["files", "All files"], ["requests", "Requests"], ["activity", "Activity"]].map(([k, label]) => (
+          {[["users", "Users"], ["files", "All files"], ["requests", "Requests"], ["quota", "Storage"], ["activity", "Activity"]].map(([k, label]) => (
             <button key={k} onClick={() => setTab(k)}
               className={"pb-3 px-1 text-sm transition-colors border-b-2 -mb-px " +
                 (tab === k ? "border-[#e8b9a0] text-white" : "border-transparent text-neutral-400 hover:text-white")}>
               {label}
               {k === "requests" && requests.length > 0 && (
                 <span className="ml-2 text-xs bg-[#e8b9a0] text-neutral-900 rounded-full px-2 py-0.5">{requests.length}</span>
+              )}
+              {k === "quota" && quotaRequests.length > 0 && (
+                <span className="ml-2 text-xs bg-[#e8b9a0] text-neutral-900 rounded-full px-2 py-0.5">{quotaRequests.length}</span>
               )}
             </button>
           ))}
@@ -190,6 +199,37 @@ export default function Admin({ onBack }) {
                         <button onClick={() => call(`/admin/requests/${r.id}/approve`, { method: "POST" })}
                           className="text-[#e8b9a0] hover:brightness-110">Approve</button>
                         <button onClick={() => call(`/admin/requests/${r.id}/reject`, { method: "POST" })}
+                          className="text-red-400 hover:text-red-300">Reject</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        )}
+
+        {tab === "quota" && (
+          quotaRequests.length === 0 ? (
+            <p className="text-sm text-neutral-500 py-6">No pending storage requests.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead className="text-neutral-400">
+                  <tr><th className="py-2">User</th><th>Current</th><th>Requested</th><th>Reason</th><th>Sent</th><th></th></tr>
+                </thead>
+                <tbody>
+                  {quotaRequests.map((r) => (
+                    <tr key={r.id} className="border-t border-white/10">
+                      <td className="py-3 pr-4">{r.username}</td>
+                      <td className="pr-4 text-neutral-400">{fmt(r.current_quota)}</td>
+                      <td className="pr-4 text-[#e8b9a0]">{fmt(r.requested_bytes)}</td>
+                      <td className="max-w-xs break-all pr-4 text-neutral-400">{r.reason || "-"}</td>
+                      <td className="whitespace-nowrap pr-4 text-neutral-400">{when(r.created_at)}</td>
+                      <td className="text-right space-x-4 whitespace-nowrap">
+                        <button onClick={() => call(`/admin/quota-requests/${r.id}/approve`, { method: "POST" })}
+                          className="text-[#e8b9a0] hover:brightness-110">Approve</button>
+                        <button onClick={() => call(`/admin/quota-requests/${r.id}/reject`, { method: "POST" })}
                           className="text-red-400 hover:text-red-300">Reject</button>
                       </td>
                     </tr>

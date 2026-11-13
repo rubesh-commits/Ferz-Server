@@ -20,12 +20,19 @@ os.makedirs(STORAGE_PATH, exist_ok=True)
 
 DEFAULT_QUOTA = 2 * 1024**3
 
+# Share the login session between ferz.co.in and drive.ferz.co.in.
+# Local DEV keeps a host-only cookie so plain HTTP on localhost still works.
+COOKIE_DOMAIN = os.environ.get("COOKIE_DOMAIN")
+if COOKIE_DOMAIN is None:
+    COOKIE_DOMAIN = "" if os.environ.get("DEV") == "1" else ".ferz.co.in"
+
 app.add_middleware(
     SessionMiddleware,
     secret_key=os.environ["SESSION_SECRET"],
     https_only=os.environ.get("DEV") != "1",
     same_site="lax",
     max_age=60 * 60 * 24 * 14,
+    domain=COOKIE_DOMAIN or None,
 )
 ph = PasswordHasher()
 DUMMY_HASH = ph.hash("dummy-password")
@@ -64,6 +71,13 @@ with db() as c:
     c.execute("""CREATE TABLE IF NOT EXISTS activity (
         id INTEGER PRIMARY KEY, username TEXT, action TEXT NOT NULL,
         detail TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)""")
+
+with db() as c:
+    c.execute("""CREATE TABLE IF NOT EXISTS quota_requests (
+        id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, username TEXT NOT NULL,
+        requested_bytes INTEGER NOT NULL, reason TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP, resolved_at TEXT)""")
 
 def log(action, detail="", uid=None, username=None):
     try:
@@ -229,6 +243,46 @@ def media_info(uid: int = Depends(current_user)):
         }
     return {"info": out}
 
+@app.get("/profile")
+def profile(uid: int = Depends(current_user)):
+    with db() as c:
+        row = c.execute("SELECT username, is_admin, quota_bytes FROM users WHERE id=?",
+                        (uid,)).fetchone()
+        reqs = c.execute("""
+            SELECT id, requested_bytes, reason, status, created_at, resolved_at
+            FROM quota_requests WHERE user_id=? ORDER BY id DESC LIMIT 20""", (uid,)).fetchall()
+    return {
+        "id": uid,
+        "username": row["username"],
+        "is_admin": bool(row["is_admin"]),
+        "quota": row["quota_bytes"],
+        "used": user_used_bytes(uid),
+        "requests": [dict(r) for r in reqs],
+    }
+
+@app.post("/profile/quota-requests")
+@limiter.limit("5/hour")
+def request_quota_increase(request: Request, requested_gb: float = Form(...),
+                           reason: str = Form(""), uid: int = Depends(current_user)):
+    reason = reason.strip()
+    if not (0 < requested_gb <= 1024):
+        raise HTTPException(400, "Requested limit must be between 0 and 1024 GB")
+    if len(reason) > 500:
+        raise HTTPException(400, "Reason must be 500 characters or less")
+    requested_bytes = int(round(requested_gb * 1024**3))
+    with db() as c:
+        row = c.execute("SELECT username, quota_bytes FROM users WHERE id=?", (uid,)).fetchone()
+        if requested_bytes <= row["quota_bytes"]:
+            raise HTTPException(400, "Requested limit must be higher than your current limit")
+        pending = c.execute("SELECT 1 FROM quota_requests WHERE user_id=? AND status='pending'",
+                            (uid,)).fetchone()
+        if pending:
+            raise HTTPException(409, "You already have a pending request")
+        c.execute("""INSERT INTO quota_requests (user_id, username, requested_bytes, reason)
+                     VALUES (?,?,?,?)""", (uid, row["username"], requested_bytes, reason))
+    log("request_storage", f"{requested_gb:g} GB", uid=uid)
+    return {"ok": True}
+
 @app.get("/admin/users")
 def admin_list_users(_: int = Depends(current_admin)):
     rows = db().execute("""
@@ -330,6 +384,41 @@ def admin_reject_request(req_id: int, _: int = Depends(current_admin)):
     log("reject_request", f"request #{req_id}", uid=_)
     return {"ok": True}
 
+@app.get("/admin/quota-requests")
+def admin_list_quota_requests(_: int = Depends(current_admin)):
+    rows = db().execute("""
+        SELECT q.id, q.user_id, q.username, q.requested_bytes, q.reason, q.created_at,
+               u.quota_bytes AS current_quota
+        FROM quota_requests q LEFT JOIN users u ON u.id = q.user_id
+        WHERE q.status='pending' ORDER BY q.id DESC""").fetchall()
+    return {"requests": [dict(r) for r in rows]}
+
+@app.post("/admin/quota-requests/{req_id}/approve")
+def admin_approve_quota_request(req_id: int, _: int = Depends(current_admin)):
+    with db() as c:
+        r = c.execute("""SELECT user_id, requested_bytes FROM quota_requests
+                         WHERE id=? AND status='pending'""", (req_id,)).fetchone()
+        if not r:
+            raise HTTPException(404, "No such pending request")
+        cur = c.execute("UPDATE users SET quota_bytes=MAX(quota_bytes, ?) WHERE id=?",
+                        (r["requested_bytes"], r["user_id"]))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "User no longer exists")
+        c.execute("""UPDATE quota_requests SET status='approved', resolved_at=CURRENT_TIMESTAMP
+                     WHERE id=?""", (req_id,))
+    log("approve_storage", f"request #{req_id}", uid=_)
+    return {"ok": True}
+
+@app.post("/admin/quota-requests/{req_id}/reject")
+def admin_reject_quota_request(req_id: int, _: int = Depends(current_admin)):
+    with db() as c:
+        cur = c.execute("""UPDATE quota_requests SET status='rejected', resolved_at=CURRENT_TIMESTAMP
+                           WHERE id=? AND status='pending'""", (req_id,))
+    if cur.rowcount == 0:
+        raise HTTPException(404, "No such pending request")
+    log("reject_storage", f"request #{req_id}", uid=_)
+    return {"ok": True}
+
 @app.get("/admin/files")
 def admin_list_files(_: int = Depends(current_admin)):
     rows = db().execute("""
@@ -377,5 +466,12 @@ def admin_activity(_: int = Depends(current_admin)):
         "SELECT username, action, detail, created_at FROM activity ORDER BY id DESC LIMIT 200"
     ).fetchall()
     return {"activity": [dict(r) for r in rows]}
+
+# Local/single-host access to the drive app. In production the drive is served
+# at the root of drive.ferz.co.in; this path is a convenience for local testing.
+@app.get("/drive")
+@app.get("/drive/")
+def drive_frontend():
+    return FileResponse(os.path.join("frontend", "dist", "index.html"))
 
 app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="frontend")
