@@ -14,6 +14,8 @@ export default defineConfig({
       '/me': 'http://localhost:8000',
       '/media': 'http://localhost:8000',
       '/photos': 'http://localhost:8000',
+      '/documents': 'http://localhost:8000',
+      '/preview': 'http://localhost:8000',
       '/upload': 'http://localhost:8000',
       '/request-user': 'http://localhost:8000',
       '/profile': 'http://localhost:8000',

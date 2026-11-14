@@ -28,5 +28,6 @@ helio-update.zip
 update.sh
 Show password in login.txt
 storage/
+previews/
 helio-update/
 __pycache__/

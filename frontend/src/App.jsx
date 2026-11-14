@@ -11,12 +11,130 @@ const NAV_ICONS = {
   all: <><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></>,
   photos: <><rect x="3" y="4" width="18" height="16" rx="2.5" /><circle cx="9" cy="10" r="1.8" /><path d="M21 16l-5-5-8 8" /></>,
   videos: <><rect x="3" y="5" width="18" height="14" rx="2.5" /><path d="M10 9.5l5 2.5-5 2.5z" /></>,
+  documents: <><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /><path d="M9 13h6M9 17h4" /></>,
 };
+
+const UPLOAD_ACCEPT = "image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.txt,.odt";
+
+const extOf = (name) => {
+  const match = /\.([^.]+)$/.exec(name || "");
+  return match ? match[1].toUpperCase() : "FILE";
+};
+
+function DocumentPreview({ name, small = false }) {
+  return (
+    <div className={"flex h-full w-full flex-col items-center justify-center bg-gradient-to-br from-[#232436] to-[#191a26] text-neutral-400 " +
+      (small ? "gap-0" : "gap-3")}>
+      <svg viewBox="0 0 24 24" className={small ? "h-5 w-5" : "h-12 w-12"} fill="none" stroke="currentColor"
+        strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+        <path d="M14 3v5h5" />
+        <path d="M9 13h6M9 17h4" />
+      </svg>
+      {!small && (
+        <span className="rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] tracking-wide text-neutral-300">
+          {extOf(name)}
+        </span>
+      )}
+    </div>
+  );
+}
+
+const API_URL = "";
+const IDLE_UPLOAD = { state: "idle", progress: 0, index: 0, total: 0, name: "", failed: 0 };
+
+const uploadFile = (file, onProgress) =>
+  new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_URL}/upload/`);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(e.loaded);
+    };
+    xhr.onload = () => {
+      if (xhr.status === 401) {
+        reject(Object.assign(new Error("Not logged in"), { unauthorized: true }));
+      } else if (xhr.status >= 200 && xhr.status < 300) {
+        resolve();
+      } else {
+        let detail = `Upload failed (${xhr.status})`;
+        try {
+          const body = JSON.parse(xhr.responseText);
+          if (body.detail) detail = body.detail;
+        } catch { /* not JSON */ }
+        reject(new Error(`${file.name}: ${detail}`));
+      }
+    };
+    xhr.onerror = () => reject(new Error(`${file.name}: network error`));
+    xhr.onabort = () => reject(new Error(`${file.name}: upload cancelled`));
+    const formData = new FormData();
+    formData.append("file", file);
+    xhr.send(formData);
+  });
+
+function UploadBar({ upload }) {
+  const active = upload.state !== "idle";
+  const done = upload.state === "done";
+  const failed = done && upload.failed > 0;
+  const label = done
+    ? failed
+      ? `Upload finished — ${upload.failed} of ${upload.total} failed`
+      : `Uploaded ${upload.total} file${upload.total === 1 ? "" : "s"}`
+    : upload.total > 1
+      ? `Uploading ${upload.index} of ${upload.total} — ${upload.name}`
+      : `Uploading ${upload.name}`;
+
+  return (
+    <div className="pointer-events-none fixed inset-x-0 top-0 z-[70] flex justify-center px-4">
+      <div
+        role="status"
+        aria-live="polite"
+        aria-hidden={!active}
+        className={"w-full max-w-sm overflow-hidden rounded-full border border-white/10 bg-[#1b1a26]/95 shadow-xl shadow-black/50 backdrop-blur-xl transition-transform duration-500 ease-out " +
+          (active ? "translate-y-3" : "-translate-y-[150%]")}
+      >
+        <div className="px-3.5 pb-2.5 pt-2">
+          <div className="flex items-center gap-2 text-xs">
+            {done ? (
+              failed ? (
+                <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 shrink-0 text-red-400" fill="none"
+                  stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16h.01" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 shrink-0 text-emerald-400" fill="none"
+                  stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M20 6 9 17l-5-5" />
+                </svg>
+              )
+            ) : (
+              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 shrink-0 animate-spin text-[#e8b9a0]" fill="none"
+                stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <circle cx="12" cy="12" r="9" opacity="0.25" />
+                <path d="M21 12a9 9 0 0 0-9-9" />
+              </svg>
+            )}
+            <span className="min-w-0 flex-1 truncate text-neutral-200">{label}</span>
+            <span className="shrink-0 tabular-nums text-neutral-400">{Math.round(upload.progress)}%</span>
+          </div>
+          <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-white/10">
+            <div
+              className={"h-full rounded-full transition-[width] duration-150 ease-out " +
+                (failed ? "bg-red-400" : "bg-gradient-to-r from-[#e8b9a0] to-[#d9a58b]")}
+              style={{ width: `${upload.progress}%` }}
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function App() {
   const [media, setMedia] = useState([]);
   const [selected, setSelected] = useState(null);
+  const [previewError, setPreviewError] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [upload, setUpload] = useState(IDLE_UPLOAD);
   const [authed, setAuthed] = useState(null);
   const [me, setMe] = useState(null);
   const [showAdmin, setShowAdmin] = useState(false);
@@ -30,8 +148,7 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState("newest");
   const touchStart = useRef(0);
-
-  const API_URL = ""; 
+  const uploadTimer = useRef(null);
 
   const redirectToLogin = () => window.location.replace(loginUrl());
 
@@ -60,27 +177,53 @@ export default function App() {
       .catch(() => { setAuthed(false); redirectToLogin(); });
   }, []);
 
+  useEffect(() => () => clearTimeout(uploadTimer.current), []);
+
   const handleUpload = async (event) => {
     const input = event.target;
     const files = Array.from(input.files);
     if (!files.length) return;
 
+    if (uploadTimer.current) {
+      clearTimeout(uploadTimer.current);
+      uploadTimer.current = null;
+    }
+
+    const totalBytes = files.reduce((sum, f) => sum + f.size, 0) || 1;
+    let completedBytes = 0;
+    let failed = 0;
+
     setIsUploading(true);
-    for (const file of files) {
-      const formData = new FormData();
-      formData.append("file", file);
+    setUpload({ state: "active", progress: 0, index: 1, total: files.length, name: files[0].name, failed: 0 });
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      setUpload((u) => ({ ...u, index: i + 1, name: file.name }));
       try {
-        const response = await fetch(`${API_URL}/upload/`, {
-          method: 'POST',
-          body: formData,
+        await uploadFile(file, (loaded) => {
+          const done = completedBytes + Math.min(loaded, file.size);
+          setUpload((u) => ({ ...u, progress: Math.min(99, (done / totalBytes) * 100) }));
         });
-        if (response.status === 401) { setAuthed(false); redirectToLogin(); break; }
-        if (!response.ok) alert(`Upload failed: ${file.name}`);
       } catch (error) {
+        if (error?.unauthorized) {
+          setIsUploading(false);
+          input.value = "";
+          setAuthed(false);
+          redirectToLogin();
+          return;
+        }
+        failed += 1;
         console.error("Upload error:", error);
+        alert(error?.message || `Upload failed: ${file.name}`);
+      } finally {
+        completedBytes += file.size;
+        setUpload((u) => ({ ...u, progress: Math.min(99, (completedBytes / totalBytes) * 100) }));
       }
     }
+
     fetchMedia();
+    setUpload((u) => ({ ...u, state: "done", progress: 100, failed }));
+    uploadTimer.current = setTimeout(() => setUpload(IDLE_UPLOAD), 1800);
     setIsUploading(false);
     input.value = "";
   };
@@ -118,18 +261,28 @@ export default function App() {
   };
 
   const isVideo = (filename) => /\.(mp4|webm|ogg|mov)$/i.test(filename);
+  const isImage = (filename) => /\.(jpe?g|png|webp|heic|heif|gif|avif)$/i.test(filename);
+  const isDocument = (filename) => !isVideo(filename) && !isImage(filename);
+  const isPreviewable = (filename) => /\.(pdf|doc|docx)$/i.test(filename);
+  const kindOf = (filename) => (isVideo(filename) ? "Video" : isImage(filename) ? "Photo" : "Document");
+  const matchesSection = (filename) =>
+    section === "all" ? true :
+    section === "videos" ? isVideo(filename) :
+    section === "documents" ? isDocument(filename) :
+    isImage(filename);
   const fmtStore = (b) =>
     b == null ? "-" : b >= 1024 ** 3 ? (b / 1024 ** 3).toFixed(2) + " GB" :
     b >= 1024 ** 2 ? (b / 1024 ** 2).toFixed(1) + " MB" : Math.round(b / 1024) + " KB";
   const nameOf = (f) => info?.[f]?.name || f;
   const counts = {
     all: media.length,
-    photos: media.filter((f) => !isVideo(f)).length,
-    videos: media.filter((f) => isVideo(f)).length,
+    photos: media.filter(isImage).length,
+    videos: media.filter(isVideo).length,
+    documents: media.filter(isDocument).length,
   };
   const idx = (f) => media.indexOf(f);
   const shown = media
-    .filter((f) => section === "all" || (section === "videos") === isVideo(f))
+    .filter(matchesSection)
     .filter((f) => nameOf(f).toLowerCase().includes(query.trim().toLowerCase()))
     .sort((a, b) =>
       sort === "oldest" ? idx(b) - idx(a) :
@@ -139,7 +292,12 @@ export default function App() {
   const pct = me?.quota ? Math.min(100, (me.used / me.quota) * 100) : 0;
 
   const selIdx = selected ? shown.indexOf(selected) : -1;
-  const go = (d) => { const n = shown[selIdx + d]; if (n) setSelected(n); };
+  const openFile = (file) => {
+    setPreviewError(false);
+    setSelected(file);
+  };
+
+  const go = (d) => { const n = shown[selIdx + d]; if (n) openFile(n); };
 
   useEffect(() => {
     if (!selected) return;
@@ -196,7 +354,7 @@ export default function App() {
     onClick: () => {
       if (longPressed.current) { longPressed.current = false; return; }
       if (checked.length > 0 && isTouch()) toggleCheck(file);
-      else setSelected(file);
+      else openFile(file);
     },
   });
 
@@ -211,15 +369,16 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#14151f] text-white font-sans flex">
+      <UploadBar upload={upload} />
       <nav className="hidden md:flex sticky top-0 self-start h-screen w-64 shrink-0 flex-col p-4 border-r border-white/10 bg-black/10">
         <h1 className="text-2xl font-serif px-2 mb-4">Ferz Space</h1>
         <label className="cursor-pointer flex items-center justify-center gap-2 bg-gradient-to-r from-[#e8b9a0] to-[#d9a58b] text-neutral-900 text-base font-medium py-3 rounded-xl mb-4 hover:brightness-105 transition">
           <Icon><path d="M12 5v14M5 12h14" /></Icon>
-          {isUploading ? "Uploading..." : "New upload"}
-          <input type="file" multiple className="hidden" accept="image/*,video/*"
+          {isUploading ? `Uploading ${Math.round(upload.progress)}%` : "New upload"}
+          <input type="file" multiple className="hidden" accept={UPLOAD_ACCEPT}
             onChange={handleUpload} disabled={isUploading} />
         </label>
-        {[["all", "All"], ["photos", "Photos"], ["videos", "Videos"]].map(([k, label]) => (
+        {[["all", "All"], ["photos", "Photos"], ["videos", "Videos"], ["documents", "Documents"]].map(([k, label]) => (
           <button key={k} onClick={() => setSection(k)}
             className={"flex justify-between items-center px-3 py-3 rounded-xl text-base transition-colors " +
               (section === k ? "bg-white/10 text-white" : "text-neutral-400 hover:bg-white/5 hover:text-white")}>
@@ -270,10 +429,10 @@ export default function App() {
           </div>
         </header>
 
-        <div className="flex gap-2 mb-4 md:hidden">
-          {[["all", "All"], ["photos", "Photos"], ["videos", "Videos"]].map(([k, label]) => (
+        <div className="flex gap-2 mb-4 md:hidden overflow-x-auto">
+          {[["all", "All"], ["photos", "Photos"], ["videos", "Videos"], ["documents", "Documents"]].map(([k, label]) => (
             <button key={k} onClick={() => setSection(k)}
-              className={"px-4 py-2 rounded-full text-sm " + (section === k ? "bg-white/15" : "bg-white/5 text-neutral-400")}>
+              className={"shrink-0 whitespace-nowrap px-3 py-2 rounded-full text-sm " + (section === k ? "bg-white/15" : "bg-white/5 text-neutral-400")}>
               {label} {counts[k]}
             </button>
           ))}
@@ -302,7 +461,7 @@ export default function App() {
         
         {shown.length === 0 ? (
             <p className="text-sm text-neutral-500 py-10 text-center">
-              {media.length === 0 ? "Nothing here yet. Upload some photos or videos." : "No matches."}
+              {media.length === 0 ? "Nothing here yet. Upload some photos, videos or documents." : "No matches."}
             </p>
           ) : view === "grid" ? (
             <div className="grid grid-cols-2 sm:grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-3 sm:gap-4 auto-rows-[200px] sm:auto-rows-[240px] select-none [-webkit-touch-callout:none]">
@@ -329,8 +488,10 @@ export default function App() {
                   <div className="flex-1 min-h-0">
                     {isVideo(file) ? (
                       <video src={`${API_URL}/photos/${file}`} className="w-full h-full object-cover opacity-90 group-hover:opacity-100" muted preload="metadata" pointer-events-none/>
-                    ) : (
+                    ) : isImage(file) ? (
                       <img src={`${API_URL}/photos/${file}`} className="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity" loading="lazy" pointer-events-none/>
+                    ) : (
+                      <DocumentPreview name={nameOf(file)} />
                     )}
                   </div>
                   <div className="px-3 py-2 bg-black/20">
@@ -359,8 +520,12 @@ export default function App() {
                   </button>
                   {isVideo(file) ? (
                     <video src={`${API_URL}/photos/${file}`} className="h-10 w-10 rounded-lg object-cover shrink-0" muted preload="metadata" pointer-events-none/>
-                  ) : (
+                  ) : isImage(file) ? (
                     <img src={`${API_URL}/photos/${file}`} className="h-10 w-10 rounded-lg object-cover shrink-0" loading="lazy" pointer-events-none/>
+                  ) : (
+                    <div className="h-10 w-10 shrink-0 overflow-hidden rounded-lg">
+                      <DocumentPreview name={nameOf(file)} small />
+                    </div>
                   )}
                   <div className="min-w-0 flex-1 truncate text-sm">{nameOf(file)}</div>
                   <div className="text-xs text-neutral-400 w-20 text-right">{fmtSize(info?.[file]?.bytes)}</div>
@@ -395,7 +560,7 @@ export default function App() {
                     return (
                       <li key={f} className="text-sm border-t border-neutral-800 pt-3">
                         <div className="font-medium break-all">{i.name || f}</div>
-                        <div className="text-neutral-400">{isVideo(f) ? "Video" : "Photo"} · {fmtSize(i.bytes)}</div>
+                        <div className="text-neutral-400">{kindOf(f)} · {fmtSize(i.bytes)}</div>
                         <div className="text-neutral-500">
                           {i.uploaded ? new Date(i.uploaded.replace(" ", "T") + "Z").toLocaleString() : ""}
                         </div>
@@ -411,7 +576,7 @@ export default function App() {
 
       <label className="md:hidden fixed bottom-5 right-5 z-40 h-14 w-14 rounded-2xl bg-gradient-to-r from-[#e8b9a0] to-[#d9a58b] text-neutral-900 text-3xl flex items-center justify-center shadow-xl cursor-pointer">
         +
-        <input type="file" multiple className="hidden" accept="image/*,video/*"
+        <input type="file" multiple className="hidden" accept={UPLOAD_ACCEPT}
           onChange={handleUpload} disabled={isUploading} />
       </label>
 
@@ -436,8 +601,63 @@ export default function App() {
 
             {isVideo(selected) ? (
               <video src={`${API_URL}/photos/${selected}`} controls autoPlay className="max-h-[80dvh] max-w-full rounded-lg shadow-2xl ring-1 ring-white/10" />
-            ) : (
+            ) : isImage(selected) ? (
               <img src={`${API_URL}/photos/${selected}`} className="max-h-[80dvh] max-w-full rounded-lg shadow-2xl ring-1 ring-white/10 object-contain" />
+            ) : isPreviewable(selected) && !previewError ? (
+              <div className="flex h-[82dvh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#1b1c28] shadow-2xl">
+                <div className="flex items-center gap-3 border-b border-white/10 px-4 py-2.5">
+                  <span className="min-w-0 truncate text-sm text-neutral-200">{nameOf(selected)}</span>
+                  <span className="hidden shrink-0 text-xs text-neutral-500 sm:inline">{extOf(nameOf(selected))}</span>
+                  <div className="ml-auto flex shrink-0 items-center gap-3">
+                    <a href={`${API_URL}/documents/${selected}`} download
+                      className="text-xs font-medium text-[#e8b9a0] hover:brightness-110">Download</a>
+                    <a href={`${API_URL}/preview/${selected}`} target="_blank" rel="noreferrer"
+                      className="hidden text-xs text-neutral-400 hover:text-white sm:inline">Open</a>
+                  </div>
+                </div>
+                <iframe
+                  src={`${API_URL}/preview/${selected}`}
+                  title={nameOf(selected)}
+                  onLoad={(e) => {
+                    try {
+                      const text = e.currentTarget.contentDocument?.body?.innerText || "";
+                      if (text.includes("LibreOffice") || text.includes('"detail"')) setPreviewError(true);
+                    } catch { /* browser PDF viewer */ }
+                  }}
+                  className="min-h-0 w-full flex-1 bg-white"
+                />
+              </div>
+            ) : (
+              <div className="flex w-full max-w-sm flex-col items-center gap-5 rounded-3xl border border-white/10 bg-white/5 p-8 text-center backdrop-blur-xl">
+                <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-[#e8b9a0]/10 text-[#e8b9a0]">
+                  <svg viewBox="0 0 24 24" className="h-10 w-10" fill="none" stroke="currentColor"
+                    strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+                    <path d="M14 3v5h5" />
+                    <path d="M9 13h6M9 17h4" />
+                  </svg>
+                </div>
+                <div className="w-full min-w-0">
+                  <p className="truncate text-lg font-medium">{nameOf(selected)}</p>
+                  <p className="mt-1 text-sm text-neutral-400">
+                    {extOf(nameOf(selected))} · {fmtSize(info?.[selected]?.bytes)}
+                  </p>
+                </div>
+                <div className="flex flex-wrap justify-center gap-3">
+                  <a href={`${API_URL}/documents/${selected}`} download
+                    className="rounded-xl bg-gradient-to-r from-[#e8b9a0] to-[#d9a58b] px-4 py-2.5 text-sm font-medium text-neutral-900 transition hover:brightness-105">
+                    Download
+                  </a>
+                  <a href={`${API_URL}/photos/${selected}`} target="_blank" rel="noreferrer"
+                    className="rounded-xl border border-white/15 px-4 py-2.5 text-sm text-neutral-200 transition hover:bg-white/5">
+                    Open in new tab
+                  </a>
+                </div>
+                {previewError && (
+                  <p className="text-xs text-amber-300">Preview isn't available right now. Download the file instead.</p>
+                )}
+                <p className="text-xs text-neutral-500">Office files open in your system's default app.</p>
+              </div>
             )}
           </div>
           {selIdx > 0 && (

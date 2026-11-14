@@ -208,8 +208,7 @@ export default function Hub() {
           </p>
 
           <div className="grid gap-4 sm:grid-cols-2">
-            {SERVICES.map((service) => {
-              const available = service.key === "drive";
+            {SERVICES.map((service) => {              const available = service.key === "drive";
               const body = (
                 <>
                   <div className={"flex h-12 w-12 items-center justify-center rounded-2xl " +
@@ -255,6 +254,25 @@ export default function Hub() {
             })}
           </div>
         </main>
+
+        <footer className="flex justify-center pb-2">
+          <div className="rounded-2xl border border-white/10 bg-white/5 px-6 py-4 text-center backdrop-blur-xl">
+            <p className="flex items-center justify-center gap-2 text-sm text-neutral-200">
+              <svg viewBox="0 0 24 24" className="h-4 w-4 text-[#e8b9a0]" fill="none" stroke="currentColor"
+                strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="4" y="10" width="16" height="10" rx="2.5" />
+                <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+              </svg>
+              End-to-end encryption
+            </p>
+            <p className="mt-1 text-sm text-neutral-400">
+              Support:{" "}
+              <a href="mailto:support@ferz.co.in" className="text-[#e8b9a0] hover:brightness-110">
+                support@ferz.co.in
+              </a>
+            </p>
+          </div>
+        </footer>
       </div>
     </div>
   );

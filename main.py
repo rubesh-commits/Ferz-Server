@@ -1,4 +1,4 @@
-import os, uuid, shutil, sqlite3
+import os, uuid, shutil, sqlite3, subprocess, tempfile, threading
 from argon2 import PasswordHasher
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -14,9 +14,12 @@ register_heif_opener()
 
 app = FastAPI()
 STORAGE_PATH = "storage"
+PREVIEW_PATH = "previews"
+PREVIEW_LOCK = threading.Lock()
 
 DB_PATH = "app.db"
 os.makedirs(STORAGE_PATH, exist_ok=True)
+os.makedirs(PREVIEW_PATH, exist_ok=True)
 
 DEFAULT_QUOTA = 2 * 1024**3
 
@@ -155,7 +158,53 @@ def me(uid: int = Depends(current_user)):
     return {"id": uid, "is_admin": bool(row["is_admin"]),
             "quota": row["quota_bytes"], "used": user_used_bytes(uid)}
 
-ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".webp", ".mp4", ".webm", ".heic", ".heif"}
+ALLOWED_EXT = {
+    ".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif",
+    ".mp4", ".webm",
+    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+    ".csv", ".txt", ".odt",
+}
+
+def build_pdf_preview(path: str, stored_name: str) -> str:
+    cache = os.path.join(PREVIEW_PATH, stored_name + ".pdf")
+    try:
+        if os.path.isfile(cache) and os.path.getmtime(cache) >= os.path.getmtime(path):
+            return cache
+    except OSError:
+        pass
+
+    soffice = shutil.which("soffice") or shutil.which("libreoffice")
+    if not soffice:
+        raise HTTPException(503, "DOC/DOCX previews need LibreOffice on the server")
+
+    with PREVIEW_LOCK:
+        if os.path.isfile(cache) and os.path.getmtime(cache) >= os.path.getmtime(path):
+            return cache
+        tmp = tempfile.mkdtemp(prefix=".preview-", dir=PREVIEW_PATH)
+        try:
+            profile = os.path.join(tmp, "profile")
+            os.makedirs(profile, exist_ok=True)
+            proc = subprocess.run(
+                [soffice, "--headless", "--norestore",
+                 f"-env:UserInstallation=file://{profile}",
+                 "--convert-to", "pdf", "--outdir", tmp, path],
+                capture_output=True, timeout=120, env={**os.environ, "HOME": tmp},
+            )
+            produced = os.path.join(tmp, os.path.splitext(os.path.basename(path))[0] + ".pdf")
+            if proc.returncode != 0 or not os.path.isfile(produced):
+                raise HTTPException(500, "Could not convert document for preview")
+            os.replace(produced, cache)
+        except subprocess.TimeoutExpired:
+            raise HTTPException(504, "Document conversion timed out")
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+    return cache
+
+def remove_preview(stored_name: str) -> None:
+    try:
+        os.remove(os.path.join(PREVIEW_PATH, stored_name + ".pdf"))
+    except FileNotFoundError:
+        pass
 
 def user_used_bytes(uid: int) -> int:
     d = os.path.join(STORAGE_PATH, str(uid))
@@ -209,6 +258,35 @@ def get_photo(filename: str, uid: int = Depends(current_user)):
         raise HTTPException(404)
     return FileResponse(os.path.join(STORAGE_PATH, str(uid), filename))
 
+@app.get("/documents/{filename}")
+def get_document(filename: str, uid: int = Depends(current_user)):
+    row = db().execute("SELECT original_name FROM files WHERE owner_id=? AND stored_name=?",
+                       (uid, filename)).fetchone()
+    if not row:
+        raise HTTPException(404)
+    path = os.path.join(STORAGE_PATH, str(uid), filename)
+    if not os.path.isfile(path):
+        raise HTTPException(404)
+    return FileResponse(path, filename=row["original_name"] or filename)
+
+@app.get("/preview/{filename}")
+def preview_document(filename: str, uid: int = Depends(current_user)):
+    row = db().execute("SELECT 1 FROM files WHERE owner_id=? AND stored_name=?",
+                       (uid, filename)).fetchone()
+    if not row:
+        raise HTTPException(404)
+    path = os.path.join(STORAGE_PATH, str(uid), filename)
+    if not os.path.isfile(path):
+        raise HTTPException(404)
+    ext = os.path.splitext(filename)[1].lower()
+    if ext == ".pdf":
+        return FileResponse(path, media_type="application/pdf",
+                            headers={"Content-Disposition": "inline"})
+    if ext in {".doc", ".docx"}:
+        return FileResponse(build_pdf_preview(path, filename), media_type="application/pdf",
+                            headers={"Content-Disposition": "inline"})
+    raise HTTPException(415, "No preview available for this file type")
+
 class NameList(BaseModel):
     names: list[str]
 
@@ -225,6 +303,7 @@ def delete_media(body: NameList, uid: int = Depends(current_user)):
             os.remove(os.path.join(STORAGE_PATH, str(uid), name))
         except FileNotFoundError:
             pass
+        remove_preview(name)
     if removed: log("delete", f"{len(removed)} file(s)", uid=uid)
     return {"deleted": len(removed)}
 
@@ -457,6 +536,7 @@ def admin_delete_file(file_id: int, admin_id: int = Depends(current_admin)):
         os.remove(os.path.join(STORAGE_PATH, str(r["owner_id"]), r["stored_name"]))
     except FileNotFoundError:
         pass
+    remove_preview(r["stored_name"])
     log("admin_delete_file", r["original_name"] or r["stored_name"], uid=admin_id)
     return {"ok": True}
 
