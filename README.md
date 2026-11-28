@@ -2,6 +2,9 @@
 
 A private, self-hosted cloud drive for photos, videos and documents. Each user gets their own storage space, and an admin console manages accounts.
 
+# Login page Screenshot
+![Project Screenshot](images/Screenshot.png)
+
 ## Features
 
 - Per-user login, with login rate limiting
